@@ -3,8 +3,10 @@ package org.embulk.filter;
 import java.text.Normalizer;
 import java.util.Set;
 
+import com.google.common.collect.ImmutableSet;
 import org.embulk.config.Config;
 import org.embulk.config.ConfigDefault;
+import org.embulk.config.ConfigException;
 import org.embulk.config.ConfigSource;
 import org.embulk.config.Task;
 import org.embulk.config.TaskSource;
@@ -17,14 +19,12 @@ import org.embulk.spi.PageBuilder;
 import org.embulk.spi.PageOutput;
 import org.embulk.spi.PageReader;
 import org.embulk.spi.Schema;
-import org.embulk.spi.time.TimestampFormatter;
-import org.embulk.spi.util.LineEncoder;
 
 public class NormalizeFilterPlugin
         implements FilterPlugin
 {
     public interface PluginTask
-            extends Task, LineEncoder.EncoderTask, TimestampFormatter.FormatterTask
+            extends Task
     {
         @Config("columns")
         Set<String> getColumns();
@@ -39,35 +39,36 @@ public class NormalizeFilterPlugin
     }
 
     @Override
-    public void transaction(
-            ConfigSource config,
-            Schema inputSchema,
-            FilterPlugin.Control control)
+    public void transaction(ConfigSource config, Schema inputSchema, FilterPlugin.Control control)
     {
         PluginTask task = config.loadConfig(PluginTask.class);
 
-        // TODO: inputSchema must include columns
+        ImmutableSet.Builder<String> builder = ImmutableSet.builder();
+        for (Column inputColumn : inputSchema.getColumns()) {
+            builder.add(inputColumn.getName());
+        }
+        Set<String> inputColumnNames = builder.build();
+        for (String name : task.getColumns()) {
+            if (!inputColumnNames.contains(name)) {
+                throw new ConfigException("Column " + name + " is not included in input columns");
+            }
+        }
 
-        Schema outputSchema = inputSchema;
-        control.run(task.dump(), outputSchema);
+        control.run(task.dump(), inputSchema);
     }
 
     @Override
-    public PageOutput open(
-            TaskSource taskSource,
-            final Schema inputSchema,
-            final Schema outputSchema,
-            final PageOutput output)
+    public PageOutput open(TaskSource taskSource, final Schema inputSchema,
+            final Schema outputSchema, final PageOutput output)
     {
         PluginTask task = taskSource.loadTask(PluginTask.class);
-        return new NormalizePageOutput(task, inputSchema, outputSchema, output);
+        return new NormalizePageOutput(task, inputSchema, output);
     }
 
     private class NormalizePageOutput
             implements PageOutput
     {
-        private final Schema inputSchema;
-        private final Schema outputSchema;
+        private final Schema schema;
         private final PageOutput output;
 
         private final PageReader reader;
@@ -75,17 +76,12 @@ public class NormalizeFilterPlugin
         private final Normalizer.Form form;
         private final boolean trim;
 
-        public NormalizePageOutput(
-                PluginTask task,
-                Schema inputSchema,
-                Schema outputSchema,
-                PageOutput output)
+        public NormalizePageOutput(PluginTask task, Schema schema, PageOutput output)
         {
-            this.inputSchema = inputSchema;
-            this.outputSchema = outputSchema;
+            this.schema = schema;
             this.output = output;
 
-            reader = new PageReader(inputSchema);
+            reader = new PageReader(schema);
             normalizeColumns = task.getColumns();
             form = task.getForm();
             trim = task.getTrim();
@@ -94,12 +90,11 @@ public class NormalizeFilterPlugin
         @Override
         public void add(Page page)
         {
-            try (final PageBuilder builder =
-                         new PageBuilder(Exec.getBufferAllocator(), outputSchema, output)) {
+            reader.setPage(page);
+            try (final PageBuilder builder = new PageBuilder(Exec.getBufferAllocator(), schema, output)) {
                 ColumnVisitor visitor = new NormalizeColumnVisitor(builder);
-                reader.setPage(page);
                 while (reader.nextRecord()) {
-                    inputSchema.visitColumns(visitor);
+                    schema.visitColumns(visitor);
                     builder.addRecord();
                 }
                 builder.flush(); // XXX: finish => NullPointerException on next page
