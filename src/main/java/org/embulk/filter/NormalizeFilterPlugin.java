@@ -62,12 +62,13 @@ public class NormalizeFilterPlugin
             final Schema outputSchema, final PageOutput output)
     {
         final PluginTask task = taskSource.loadTask(PluginTask.class);
+        final Set<String> normalizeColumns = task.getColumns();
+        final Normalizer.Form form = task.getForm();
+        final boolean trim = task.getTrim();
+
         return new PageOutput()
         {
             private final PageReader reader = new PageReader(inputSchema);
-            private final Set<String> normalizeColumns = task.getColumns();
-            private final Normalizer.Form form = task.getForm();
-            private final boolean trim = task.getTrim();
 
             @Override
             public void add(Page page)
