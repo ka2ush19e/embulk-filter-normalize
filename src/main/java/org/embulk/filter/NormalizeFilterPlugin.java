@@ -1,9 +1,10 @@
 package org.embulk.filter;
 
 import java.text.Normalizer;
+import java.util.Map;
 import java.util.Set;
 
-import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableMap;
 import org.embulk.config.Config;
 import org.embulk.config.ConfigDefault;
 import org.embulk.config.ConfigException;
@@ -19,6 +20,8 @@ import org.embulk.spi.PageBuilder;
 import org.embulk.spi.PageOutput;
 import org.embulk.spi.PageReader;
 import org.embulk.spi.Schema;
+import org.embulk.spi.type.StringType;
+import org.embulk.spi.type.Type;
 
 public class NormalizeFilterPlugin
         implements FilterPlugin
@@ -43,14 +46,20 @@ public class NormalizeFilterPlugin
     {
         PluginTask task = config.loadConfig(PluginTask.class);
 
-        ImmutableSet.Builder<String> builder = ImmutableSet.builder();
+        ImmutableMap.Builder<String, Type> builder = ImmutableMap.builder();
         for (Column inputColumn : inputSchema.getColumns()) {
-            builder.add(inputColumn.getName());
+            builder.put(inputColumn.getName(), inputColumn.getType());
         }
-        Set<String> inputColumnNames = builder.build();
+        Map<String, Type> inputColumnNameToType = builder.build();
         for (String name : task.getColumns()) {
-            if (!inputColumnNames.contains(name)) {
-                throw new ConfigException("Column " + name + " is not included in input columns");
+            Type inputColumnType = inputColumnNameToType.get(name);
+            if (inputColumnType == null) {
+                throw new ConfigException(String.format(
+                        "Column %s is not included in input schema.", name));
+            }
+            if (!(inputColumnType instanceof StringType)) {
+                throw new ConfigException(String.format(
+                        "Column %s is not string type.", name));
             }
         }
 
@@ -91,6 +100,7 @@ public class NormalizeFilterPlugin
             @Override
             public void close()
             {
+                reader.close();
                 builder.close();
             }
 
