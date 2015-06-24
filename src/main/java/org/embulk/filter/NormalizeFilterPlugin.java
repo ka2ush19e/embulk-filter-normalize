@@ -69,33 +69,29 @@ public class NormalizeFilterPlugin
         return new PageOutput()
         {
             private final PageReader reader = new PageReader(inputSchema);
+            private final PageBuilder builder = new PageBuilder(Exec.getBufferAllocator(), outputSchema, output);
 
             @Override
             public void add(Page page)
             {
                 reader.setPage(page);
-                try (final PageBuilder builder = new PageBuilder(
-                        Exec.getBufferAllocator(), outputSchema, output)) {
-                    ColumnVisitor visitor = new NormalizeColumnVisitor(builder);
-                    while (reader.nextRecord()) {
-                        inputSchema.visitColumns(visitor);
-                        builder.addRecord();
-                    }
-                    builder.flush(); // XXX: finish => NullPointerException on next page
+                ColumnVisitor visitor = new NormalizeColumnVisitor(builder);
+                while (reader.nextRecord()) {
+                    inputSchema.visitColumns(visitor);
+                    builder.addRecord();
                 }
             }
 
             @Override
             public void finish()
             {
-                output.finish();
+                builder.finish();
             }
 
             @Override
             public void close()
             {
-                reader.close();
-                output.close();
+                builder.close();
             }
 
             class NormalizeColumnVisitor
